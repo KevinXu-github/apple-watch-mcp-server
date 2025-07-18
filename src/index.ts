@@ -97,16 +97,28 @@ class AppleWatchMCPServer {
   }
 
   private async getHealthSummary(args: { timeframe: string }) {
-    const healthData = await this.healthReader.getHealthSummary(args.timeframe as 'today' | 'week' | 'month');
-    
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Apple Watch Health Summary (${args.timeframe}):\n${JSON.stringify(healthData, null, 2)}`,
-        },
-      ],
-    };
+    try {
+      const healthData = await this.healthReader.getHealthSummary(args.timeframe as 'today' | 'week' | 'month');
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Apple Watch Health Summary (${args.timeframe}):\n\nSteps: ${healthData.steps}\nResting Heart Rate: ${healthData.heartRate.resting} bpm\nAverage Heart Rate: ${healthData.heartRate.average} bpm\nMax Heart Rate: ${healthData.heartRate.max} bpm\nSleep: ${healthData.sleepHours} hours\nActive Calories: ${healthData.activeCalories}\nWorkouts: ${healthData.workouts}`,
+          },
+        ],
+      };
+    } catch (error) {
+      console.error('Error getting health summary:', error);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Error retrieving health data. Please check the server logs.',
+          },
+        ],
+      };
+    }
   }
 
   private async getWorkoutDetails(args: { limit?: number }) {

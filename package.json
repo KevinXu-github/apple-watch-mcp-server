@@ -13,10 +13,12 @@
   "description": "",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.16.0",
-    "plist": "^3.1.0"
+    "plist": "^3.1.0",
+    "xml2js": "^0.6.2"
   },
   "devDependencies": {
     "@types/node": "^24.0.14",
+    "@types/xml2js": "^0.4.14",
     "typescript": "^5.8.3"
   }
 }
