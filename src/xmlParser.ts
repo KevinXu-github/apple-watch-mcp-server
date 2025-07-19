@@ -27,6 +27,8 @@ interface WorkoutRecord {
 
 export class AppleHealthXMLParser {
   private exportPath: string;
+  private readonly MAX_FILE_SIZE_MB = 100; // Skip parsing files larger than 100MB
+  private readonly PARSE_TIMEOUT_MS = 10000; // 10 second timeout
 
   constructor(exportPath: string) {
     this.exportPath = exportPath;
@@ -40,36 +42,78 @@ export class AppleHealthXMLParser {
         throw new Error('export.xml not found');
       }
 
-      const xmlData = fs.readFileSync(xmlPath, 'utf8');
+      // Check file size first
+      const stats = fs.statSync(xmlPath);
+      const fileSizeMB = stats.size / 1024 / 1024;
       
-      return new Promise((resolve, reject) => {
+      console.error(`XML file size: ${fileSizeMB.toFixed(2)} MB`);
+      
+      // If file is too large, skip parsing and throw error to use mock data
+      if (fileSizeMB > this.MAX_FILE_SIZE_MB) {
+        console.error(`❌ File too large (${fileSizeMB.toFixed(2)} MB > ${this.MAX_FILE_SIZE_MB} MB). Using mock data.`);
+        throw new Error(`File too large: ${fileSizeMB.toFixed(2)} MB`);
+      }
+
+      // For smaller files, try parsing with a timeout
+      console.error('✅ File size acceptable, attempting to parse...');
+      return await this.parseWithTimeout(xmlPath, timeframe);
+      
+    } catch (error) {
+      console.error(`XML parsing failed: ${error}`);
+      throw new Error(`Failed to parse Apple Health data: ${error}`);
+    }
+  }
+
+  private async parseWithTimeout(xmlPath: string, timeframe: string): Promise<HealthData> {
+    return new Promise((resolve, reject) => {
+      // Set up timeout
+      const timeout = setTimeout(() => {
+        console.error(`❌ XML parsing timed out after ${this.PARSE_TIMEOUT_MS}ms`);
+        reject(new Error('XML parsing timeout'));
+      }, this.PARSE_TIMEOUT_MS);
+
+      try {
+        console.error('📖 Reading XML file...');
+        const xmlData = fs.readFileSync(xmlPath, 'utf8');
+        
+        console.error('🔄 Parsing XML...');
         parseString(xmlData, (err, result) => {
+          clearTimeout(timeout); // Clear timeout on completion
+          
           if (err) {
+            console.error(`❌ XML parse error: ${err}`);
             reject(err);
             return;
           }
           
           try {
+            console.error('✅ XML parsed successfully, extracting metrics...');
             const healthData = this.extractHealthMetrics(result, timeframe);
+            console.error(`✅ Metrics extracted: ${JSON.stringify(healthData)}`);
             resolve(healthData);
           } catch (parseError) {
+            console.error(`❌ Metric extraction error: ${parseError}`);
             reject(parseError);
           }
         });
-      });
-    } catch (error) {
-      throw new Error(`Failed to parse Apple Health data: ${error}`);
-    }
+      } catch (readError) {
+        clearTimeout(timeout);
+        console.error(`❌ File read error: ${readError}`);
+        reject(readError);
+      }
+    });
   }
 
   private extractHealthMetrics(xmlResult: any, timeframe: string): HealthData {
     const records = xmlResult?.HealthData?.Record || [];
     const workouts = xmlResult?.HealthData?.Workout || [];
     
+    console.error(`Total records in XML: ${Array.isArray(records) ? records.length : 0}`);
+    console.error(`Total workouts in XML: ${Array.isArray(workouts) ? workouts.length : 0}`);
+    
     // Get date range for filtering
     const { startDate, endDate } = this.getDateRange(timeframe);
     
-    // Debug: Log date range
     console.error(`Filtering data from ${startDate.toISOString()} to ${endDate.toISOString()}`);
     
     // Filter records by date range
@@ -83,15 +127,8 @@ export class AppleHealthXMLParser {
       return workoutDate >= startDate && workoutDate <= endDate;
     });
 
-    // Debug: Log counts
-    console.error(`Found ${filteredRecords.length} health records and ${filteredWorkouts.length} workouts`);
+    console.error(`Filtered records: ${filteredRecords.length}, Filtered workouts: ${filteredWorkouts.length}`);
     
-    // Sample some records to see dates
-    if (filteredRecords.length > 0) {
-      const sampleRecord = filteredRecords[0];
-      console.error(`Sample record date: ${sampleRecord.$.startDate}, type: ${sampleRecord.$.type}`);
-    }
-
     // Extract specific metrics
     const steps = this.extractSteps(filteredRecords);
     const heartRate = this.extractHeartRate(filteredRecords);
@@ -99,7 +136,7 @@ export class AppleHealthXMLParser {
     const activeCalories = this.extractActiveCalories(filteredRecords);
     const workoutCount = filteredWorkouts.length;
 
-    console.error(`Extracted: steps=${steps}, HR=${JSON.stringify(heartRate)}, sleep=${sleep}, calories=${activeCalories}, workouts=${workoutCount}`);
+    console.error(`Final metrics - Steps: ${steps}, HR: ${JSON.stringify(heartRate)}, Sleep: ${sleep}h, Calories: ${activeCalories}, Workouts: ${workoutCount}`);
 
     return {
       steps,
@@ -139,6 +176,8 @@ export class AppleHealthXMLParser {
       r.$.type === 'HKQuantityTypeIdentifierStepCount'
     );
     
+    console.error(`Found ${stepRecords.length} step records`);
+    
     return stepRecords.reduce((total, record) => {
       return total + parseFloat(record.$.value);
     }, 0);
@@ -152,6 +191,8 @@ export class AppleHealthXMLParser {
     const restingHRRecords = records.filter(r => 
       r.$.type === 'HKQuantityTypeIdentifierRestingHeartRate'
     );
+
+    console.error(`Found ${heartRateRecords.length} heart rate records, ${restingHRRecords.length} resting HR records`);
 
     if (heartRateRecords.length === 0) {
       return { resting: 60, average: 80, max: 120 };
@@ -177,6 +218,8 @@ export class AppleHealthXMLParser {
       r.$.type === 'HKCategoryTypeIdentifierSleepAnalysis'
     );
 
+    console.error(`Found ${sleepRecords.length} sleep records`);
+
     if (sleepRecords.length === 0) {
       return 7.5; // default
     }
@@ -196,6 +239,8 @@ export class AppleHealthXMLParser {
     const calorieRecords = records.filter(r => 
       r.$.type === 'HKQuantityTypeIdentifierActiveEnergyBurned'
     );
+    
+    console.error(`Found ${calorieRecords.length} calorie records`);
     
     return Math.round(calorieRecords.reduce((total, record) => {
       return total + parseFloat(record.$.value);
